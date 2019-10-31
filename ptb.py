@@ -44,7 +44,7 @@ class PTB(Dataset):
         return {
             'input': np.asarray(self.data[idx]['input']),
             'target': np.asarray(self.data[idx]['target']),
-            'length': self.data[idx]['length']
+            'length': self.data[idx]['length']  # length is the non-zero number in input or target
         }
 
     @property
@@ -86,7 +86,6 @@ class PTB(Dataset):
     def _load_vocab(self):
         with open(os.path.join(self.data_dir, self.vocab_file), 'r') as vocab_file:
             vocab = json.load(vocab_file)
-
         self.w2i, self.i2w = vocab['w2i'], vocab['i2w']
 
     def _create_data(self):
@@ -111,7 +110,7 @@ class PTB(Dataset):
                 target = words[:self.max_sequence_length-1]
                 target = target + ['<eos>']
 
-                assert len(input) == len(target), "%i, %i"%(len(input), len(target))
+                assert len(input) == len(target), "%i, %i" % (len(input), len(target))
                 length = len(input)
 
                 input.extend(['<pad>'] * (self.max_sequence_length-length))
@@ -159,7 +158,7 @@ class PTB(Dataset):
 
         assert len(w2i) == len(i2w)
 
-        print("Vocablurary of %i keys created." %len(w2i))
+        print("Vocablurary of %i keys created." % len(w2i))
 
         vocab = dict(w2i=w2i, i2w=i2w)
         with io.open(os.path.join(self.data_dir, self.vocab_file), 'wb') as vocab_file:
