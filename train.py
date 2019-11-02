@@ -1,4 +1,5 @@
 import os
+import io
 import json
 import time
 import torch
@@ -20,7 +21,6 @@ def main(args):
     datasets = OrderedDict()
     for split in splits:
         datasets[split] = Data(split=split)
-
     model = SentenceVAE(
         rnn_type=args.rnn_type,  # gru
         hidden_size=args.hidden_size,  # 256
@@ -54,30 +54,33 @@ def main(args):
     save_model_path = os.path.join(args.save_model_path, ts)
     os.makedirs(save_model_path)
 
-    def kl_anneal_function(anneal_function, step, k, x0):
-        if anneal_function == 'logistic':
-            return float(1 / (1 + np.exp(-k * (step - x0))))
-        elif anneal_function == 'linear':
-            return min(1, step / x0)
+    # def kl_anneal_function(anneal_function, step, k, x0):
+    #     if anneal_function == 'logistic':
+    #         return float(1 / (1 + np.exp(-k * (step - x0))))
+    #     elif anneal_function == 'linear':
+    #         return min(1, step / x0)
 
-    NLL = torch.nn.NLLLoss(size_average=False)
+    # NLL = torch.nn.NLLLoss(size_average=False)
     MSE = torch.nn.MSELoss()
+    Cos = torch.nn.CosineSimilarity(dim=-1)
 
     def loss_fn(output, target, length, mean, logv, anneal_function, step, k, x0):
         # Negative Log Likelihood
         # NLL_loss = NLL(logp, target)
-        cos_similarity = MSE(output, target)
+        mse = MSE(output, target)
+        COS = 1 - Cos(output, target)
+        cos = torch.mean(COS)
         # KL Divergence
         KL_loss = -0.5 * torch.sum(1 + logv - mean.pow(2) - logv.exp())
-        KL_weight = kl_anneal_function(anneal_function, step, k, x0)
+        # KL_weight = kl_anneal_function(anneal_function, step, k, x0)
 
-        return cos_similarity, KL_loss, KL_weight
+        return cos, mse, KL_loss
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
 
     tensor = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.Tensor
     step = 0
-    for epoch in range(args.epochs):
+    for epoch in range(1, args.epochs + 1):
 
         for split in splits:
 
@@ -108,10 +111,11 @@ def main(args):
                 output, mean, logv, z = model(batch, length)
 
                 # loss calculation
-                NLL_loss, KL_loss, KL_weight = loss_fn(output, target,
+                cos, mse, KL_loss= loss_fn(output, target,
                                                        length, mean, logv, args.anneal_function, step, args.k,
                                                        args.x0)
-                loss = (NLL_loss + KL_weight * KL_loss) / batch_size
+                # print(cos.item(), mse.item(), KL_loss.item())
+                loss = (cos + mse + KL_loss) / batch_size
 
                 # backward + optimization
                 if split == 'train':
@@ -125,16 +129,17 @@ def main(args):
 
                 if args.tensorboard_logging:
                     writer.add_scalar("%s/ELBO" % split.upper(), loss.item(), epoch * len(data_loader) + iteration)
-                    writer.add_scalar("%s/NLL Loss" % split.upper(), NLL_loss.item() / batch_size,
+                    writer.add_scalar("%s/Cos Loss" % split.upper(), cos.item() / batch_size,
+                                      epoch * len(data_loader) + iteration)
+                    writer.add_scalar("%s/MSE Loss" % split.upper(), mse.item() / batch_size,
                                       epoch * len(data_loader) + iteration)
                     writer.add_scalar("%s/KL Loss" % split.upper(), KL_loss.item() / batch_size,
                                       epoch * len(data_loader) + iteration)
-                    writer.add_scalar("%s/KL Weight" % split.upper(), KL_weight, epoch * len(data_loader) + iteration)
 
                 if iteration % args.print_every == 0 or iteration + 1 == len(data_loader):
-                    print("%s Batch %04d/%i, Loss %9.4f, NLL-Loss %9.4f, KL-Loss %9.4f, KL-Weight %6.3f"
-                          % (split.upper(), iteration, len(data_loader) - 1, loss.item(), NLL_loss.item() / batch_size,
-                             KL_loss.item() / batch_size, KL_weight))
+                    print("%s Batch %04d/%i, Loss %9.4f, Cos-Loss %9.4f, MSE-Loss %9.4f, KL-Loss %9.4f"
+                          % (split.upper(), iteration, len(data_loader) - 1, loss.item(), cos.item() / batch_size,
+                             mse.item() / batch_size, KL_loss.item() / batch_size))
 
                 # if split == 'valid':
                 #     if 'target_sents' not in tracker:
@@ -163,6 +168,17 @@ def main(args):
                 torch.save(model.state_dict(), checkpoint_path)
                 print("Model saved at %s" % checkpoint_path)
 
+            # print(target, output)
+            # print(torch.abs((target-output)/target))
+            if (epoch == args.epochs) and (split == "valid"):
+                x = np.arange(32)
+                save = {}
+                save['target'] = target.cpu().detach().numpy().tolist()
+                save['output'] = output.cpu().detach().numpy().tolist()
+                with io.open('./' + '/save.json', 'wb') as data_file:
+                    data = json.dumps(save, ensure_ascii=False)
+                    data_file.write(data.encode('utf8', 'replace'))
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -173,9 +189,9 @@ if __name__ == '__main__':
     parser.add_argument('--min_occ', type=int, default=1)
     parser.add_argument('--test', action='store_true')
 
-    parser.add_argument('-ep', '--epochs', type=int, default=20)
+    parser.add_argument('-ep', '--epochs', type=int, default=5)
     parser.add_argument('-bs', '--batch_size', type=int, default=20)
-    parser.add_argument('-lr', '--learning_rate', type=float, default=0.001)
+    parser.add_argument('-lr', '--learning_rate', type=float, default=1e-5)
 
     parser.add_argument('-eb', '--embedding_size', type=int, default=300)
     parser.add_argument('-rnn', '--rnn_type', type=str, default='gru')

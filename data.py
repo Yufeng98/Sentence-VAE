@@ -27,17 +27,18 @@ class Data(Dataset):
         return len(self.dataset)
 
     def __getitem__(self, idx):
-        return self.dataset[idx]
+        return np.array(self.dataset[idx])
 
     def _load_data(self):
         with open(self.dir + '/data.json', 'r') as file:
-            self.dataset = np.array(json.load(file))
+            self.dataset = np.array(json.load(file)[self.split])
 
     def _create_data(self):
 
         file_dir = './UM'
         file = list(os.walk(file_dir))[0][-1][:95]
         data = []
+        dataset = {}
         for filename in file:
             # read raw data
             f = open("./UM/{}".format(filename))
@@ -62,13 +63,11 @@ class Data(Dataset):
         data = np.array(data).reshape(950, 20, 9, 32)  # [95, 200, 9, 32]
         train_data = data[:800, :, :, :]
         valid_data = data[800:, :, :, :]
-        if self.split == 'train':
-            dataset = train_data.reshape(-1, 9, 32)
-        elif self.split == 'valid':
-            dataset = valid_data.reshape(-1, 9, 32)
+        dataset['train'] = train_data.reshape(-1, 9, 32).tolist()
+        dataset['valid'] = valid_data.reshape(-1, 9, 32).tolist()
 
         with io.open(self.dir + '/data.json', 'wb') as data_file:
-            data = json.dumps(dataset.tolist(), ensure_ascii=False)
+            data = json.dumps(dataset, ensure_ascii=False)
             data_file.write(data.encode('utf8', 'replace'))
 
         self._load_data()
