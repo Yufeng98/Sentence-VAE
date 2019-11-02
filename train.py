@@ -8,8 +8,7 @@ from multiprocessing import cpu_count
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 from collections import OrderedDict, defaultdict
-
-from ptb import PTB
+from data import Data
 from utils import to_var, idx2word, expierment_name
 from model import SentenceVAE
 
@@ -17,32 +16,19 @@ from model import SentenceVAE
 def main(args):
     ts = time.strftime('%Y-%b-%d-%H:%M:%S', time.gmtime())
 
-    splits = ['train', 'valid'] + (['test'] if args.test else [])
-
+    splits = ['train', 'valid']
     datasets = OrderedDict()
     for split in splits:
-        datasets[split] = PTB(
-            data_dir=args.data_dir,
-            split=split,
-            create_data=args.create_data,
-            max_sequence_length=args.max_sequence_length,
-            min_occ=args.min_occ
-        )
+        datasets[split] = Data(split=split)
+
     model = SentenceVAE(
-        vocab_size=datasets['train'].vocab_size,  # 9877
-        sos_idx=datasets['train'].sos_idx,  # 2
-        eos_idx=datasets['train'].eos_idx,  # 3
-        pad_idx=datasets['train'].pad_idx,  # 0
-        unk_idx=datasets['train'].unk_idx,  # 1
-        max_sequence_length=args.max_sequence_length,  # 60
-        embedding_size=args.embedding_size,  # 300
         rnn_type=args.rnn_type,  # gru
         hidden_size=args.hidden_size,  # 256
         word_dropout=args.word_dropout,  # 0
         embedding_dropout=args.embedding_dropout,  # 0.5
-        latent_size=args.latent_size,  # 16
+        latent_size=args.latent_size,  # 8
         num_layers=args.num_layers,  # 1
-        bidirectional=args.bidirectional  # true
+        bidirectional=args.bidirectional  # false
     )
 
     if torch.cuda.is_available():
@@ -51,14 +37,12 @@ def main(args):
     print(model)
     """
     SentenceVAE(
-      (embedding): Embedding(9877, 300)
       (embedding_dropout): Dropout(p=0.5)
-      (encoder_rnn): GRU(300, 256, batch_first=True)
-      (decoder_rnn): GRU(300, 256, batch_first=True)
-      (hidden2mean): Linear(in_features=256, out_features=16, bias=True)
-      (hidden2logv): Linear(in_features=256, out_features=16, bias=True)
+      (encoder_rnn): GRU(32, 256, batch_first=True)
+      (decoder_rnn): GRU(32, 256, batch_first=True)
+      (hidden2mean): Linear(in_features=256, out_features=8, bias=True)
+      (hidden2logv): Linear(in_features=256, out_features=8, bias=True)
       (latent2hidden): Linear(in_features=16, out_features=256, bias=True)
-      (outputs2vocab): Linear(in_features=256, out_features=9877, bias=True)
     )
     """
     if args.tensorboard_logging:
@@ -76,23 +60,18 @@ def main(args):
         elif anneal_function == 'linear':
             return min(1, step / x0)
 
-    NLL = torch.nn.NLLLoss(size_average=False, ignore_index=datasets['train'].pad_idx)
+    NLL = torch.nn.NLLLoss(size_average=False)
+    MSE = torch.nn.MSELoss()
 
-    def loss_fn(logp, target, length, mean, logv, anneal_function, step, k, x0):
-
-        # cut-off unnecessary padding from target, and flatten
-        print(target)
-        target = target[:, :torch.max(length).item()].contiguous().view(-1)
-        logp = logp.view(-1, logp.size(2))
-
+    def loss_fn(output, target, length, mean, logv, anneal_function, step, k, x0):
         # Negative Log Likelihood
-        NLL_loss = NLL(logp, target)
-
+        # NLL_loss = NLL(logp, target)
+        cos_similarity = MSE(output, target)
         # KL Divergence
         KL_loss = -0.5 * torch.sum(1 + logv - mean.pow(2) - logv.exp())
         KL_weight = kl_anneal_function(anneal_function, step, k, x0)
 
-        return NLL_loss, KL_loss, KL_weight
+        return cos_similarity, KL_loss, KL_weight
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
 
@@ -119,21 +98,19 @@ def main(args):
                 model.eval()
 
             for iteration, batch in enumerate(data_loader):
-                # print(iteration, batch['input'][0], batch['target'][0], batch['length'])
-                batch_size = batch['input'].size(0)
-
-                for k, v in batch.items():
-                    if torch.is_tensor(v):
-                        batch[k] = to_var(v)
-
+                batch_size = args.batch_size
+                batch = batch.type(torch.float32)
+                length = [9 for _ in range(20)]
+                if torch.is_tensor(batch):
+                    batch = to_var(batch)
+                target = batch.clone()
                 # Forward pass
-                logp, mean, logv, z = model(batch['input'], batch['length'])
+                output, mean, logv, z = model(batch, length)
 
                 # loss calculation
-                NLL_loss, KL_loss, KL_weight = loss_fn(logp, batch['target'],
-                                                       batch['length'], mean, logv, args.anneal_function, step, args.k,
+                NLL_loss, KL_loss, KL_weight = loss_fn(output, target,
+                                                       length, mean, logv, args.anneal_function, step, args.k,
                                                        args.x0)
-
                 loss = (NLL_loss + KL_weight * KL_loss) / batch_size
 
                 # backward + optimization
@@ -159,12 +136,12 @@ def main(args):
                           % (split.upper(), iteration, len(data_loader) - 1, loss.item(), NLL_loss.item() / batch_size,
                              KL_loss.item() / batch_size, KL_weight))
 
-                if split == 'valid':
-                    if 'target_sents' not in tracker:
-                        tracker['target_sents'] = list()
-                    tracker['target_sents'] += idx2word(batch['target'].detach(), i2w=datasets['train'].get_i2w(),
-                                                        pad_idx=datasets['train'].pad_idx)
-                    tracker['z'] = torch.cat((tracker['z'], z.detach()), dim=0)
+                # if split == 'valid':
+                #     if 'target_sents' not in tracker:
+                #         tracker['target_sents'] = list()
+                #     tracker['target_sents'] += idx2word(batch['target'].detach(), i2w=datasets['train'].get_i2w(),
+                #                                         pad_idx=datasets['train'].pad_idx)
+                #     tracker['z'] = torch.cat((tracker['z'], z.detach()), dim=0)
 
             print(
                 "%s Epoch %02d/%i, Mean ELBO %9.4f" % (split.upper(), epoch, args.epochs, torch.mean(tracker['ELBO'])))
@@ -173,12 +150,12 @@ def main(args):
                 writer.add_scalar("%s-Epoch/ELBO" % split.upper(), torch.mean(tracker['ELBO']), epoch)
 
             # save a dump of all sentences and the encoded latent space
-            if split == 'valid':
-                dump = {'target_sents': tracker['target_sents'], 'z': tracker['z'].tolist()}
-                if not os.path.exists(os.path.join('dumps', ts)):
-                    os.makedirs('dumps/' + ts)
-                with open(os.path.join('dumps/' + ts + '/valid_E%i.json' % epoch), 'w') as dump_file:
-                    json.dump(dump, dump_file)
+            # if split == 'valid':
+            #     dump = {'target_sents': tracker['target_sents'], 'z': tracker['z'].tolist()}
+            #     if not os.path.exists(os.path.join('dumps', ts)):
+            #         os.makedirs('dumps/' + ts)
+            #     with open(os.path.join('dumps/' + ts + '/valid_E%i.json' % epoch), 'w') as dump_file:
+            #         json.dump(dump, dump_file)
 
             # save checkpoint
             if split == 'train':
@@ -196,8 +173,8 @@ if __name__ == '__main__':
     parser.add_argument('--min_occ', type=int, default=1)
     parser.add_argument('--test', action='store_true')
 
-    parser.add_argument('-ep', '--epochs', type=int, default=1)
-    parser.add_argument('-bs', '--batch_size', type=int, default=32)
+    parser.add_argument('-ep', '--epochs', type=int, default=20)
+    parser.add_argument('-bs', '--batch_size', type=int, default=20)
     parser.add_argument('-lr', '--learning_rate', type=float, default=0.001)
 
     parser.add_argument('-eb', '--embedding_size', type=int, default=300)
@@ -205,7 +182,7 @@ if __name__ == '__main__':
     parser.add_argument('-hs', '--hidden_size', type=int, default=256)
     parser.add_argument('-nl', '--num_layers', type=int, default=1)
     parser.add_argument('-bi', '--bidirectional', action='store_true')
-    parser.add_argument('-ls', '--latent_size', type=int, default=16)
+    parser.add_argument('-ls', '--latent_size', type=int, default=8)
     parser.add_argument('-wd', '--word_dropout', type=float, default=0)
     parser.add_argument('-ed', '--embedding_dropout', type=float, default=0.5)
 

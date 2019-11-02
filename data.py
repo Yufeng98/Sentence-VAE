@@ -15,29 +15,38 @@ class Data(Dataset):
 
         super().__init__()
         self.split = split
-        self._load_data()
+        self.dir = os.getcwd()
+        if not os.path.exists(self.dir + '/data.json'):
+            print("%s preprocessed file not found at %s. Creating new." % (
+            split.upper(), self.dir + '/data.json'))
+            self._create_data()
+        else:
+            self._load_data()
 
     def __len__(self):
-        return len(self.data)
+        return len(self.dataset)
 
     def __getitem__(self, idx):
         return self.dataset[idx]
 
-    def _load_data(self, vocab=True):
+    def _load_data(self):
+        with open(self.dir + '/data.json', 'r') as file:
+            self.dataset = np.array(json.load(file))
 
-        file_dir = 'C://Users//Yufeng.Gu//Desktop//Yale//ABIDE//Outputs//ccs//filt_noglobal//rois_cc200//UM'
+    def _create_data(self):
+
+        file_dir = './UM'
         file = list(os.walk(file_dir))[0][-1][:95]
         data = []
         for filename in file:
             # read raw data
-            f = open("C://Users//Yufeng.Gu//Desktop//Yale//ABIDE//Outputs//ccs//filt_noglobal//rois_cc200//UM//"
-                     "{}".format(filename))
+            f = open("./UM/{}".format(filename))
             lines_str = f.readlines()[4:-4]
             f.close()
             # normalization
             lines = []
             for i in range(288):
-                lines[i] = scale(list(map(float, lines_str[i].split())))
+                lines.append(scale(list(map(float, lines_str[i].split()))))
             # truncation
             subject = []
             for j in range(9):
@@ -51,9 +60,15 @@ class Data(Dataset):
                 node.append(subject[:, :, i])
             data.append(np.array(node))
         data = np.array(data).reshape(950, 20, 9, 32)  # [95, 200, 9, 32]
-        train_data = data[:800, 20, 9, 32]
-        valid_data = data[800:, 20, 9, 32]
+        train_data = data[:800, :, :, :]
+        valid_data = data[800:, :, :, :]
         if self.split == 'train':
-            self.dataset = train_data.reshape(-1, 9, 32)
+            dataset = train_data.reshape(-1, 9, 32)
         elif self.split == 'valid':
-            self.dataset = valid_data.reshape(-1, 9, 32)
+            dataset = valid_data.reshape(-1, 9, 32)
+
+        with io.open(self.dir + '/data.json', 'wb') as data_file:
+            data = json.dumps(dataset.tolist(), ensure_ascii=False)
+            data_file.write(data.encode('utf8', 'replace'))
+
+        self._load_data()
