@@ -4,9 +4,10 @@ import torch.nn as nn
 import torch.nn.utils.rnn as rnn_utils
 from utils import to_var
 
+
 class SentenceVAE(nn.Module):
 
-    def __init__(self, rnn_type, hidden_size, word_dropout, embedding_dropout, latent_size,
+    def __init__(self, embedding_size, rnn_type, hidden_size, word_dropout, embedding_dropout, latent_size,
                  num_layers=1, bidirectional=False):
 
         super().__init__()
@@ -19,7 +20,7 @@ class SentenceVAE(nn.Module):
         self.num_layers = num_layers
         self.hidden_size = hidden_size
 
-        self.embedding_size = 32
+        self.embedding_size = embedding_size
         self.word_dropout_rate = word_dropout
         self.embedding_dropout = nn.Dropout(p=embedding_dropout)
 
@@ -32,20 +33,21 @@ class SentenceVAE(nn.Module):
         else:
             raise ValueError()
 
-        self.encoder_rnn = rnn(self.embedding_size, hidden_size, num_layers=num_layers, bidirectional=self.bidirectional, batch_first=True)
-        self.decoder_rnn = rnn(self.embedding_size, hidden_size, num_layers=num_layers, bidirectional=self.bidirectional, batch_first=True)
-
         self.hidden_factor = (2 if bidirectional else 1) * num_layers
-
+        self.encoder_rnn = rnn(self.embedding_size, hidden_size, num_layers=num_layers,
+                               bidirectional=self.bidirectional, batch_first=True)
+        self.decoder_rnn = rnn(self.embedding_size, hidden_size, num_layers=num_layers,
+                               bidirectional=self.bidirectional, batch_first=True)
         self.hidden2mean = nn.Linear(hidden_size * self.hidden_factor, latent_size)
         self.hidden2logv = nn.Linear(hidden_size * self.hidden_factor, latent_size)
         self.latent2hidden = nn.Linear(latent_size, hidden_size * self.hidden_factor)
-        self.output2embedding = nn.Linear(hidden_size * self.hidden_factor, self.embedding_size)
+        self.hidden2embedding = nn.Linear(hidden_size * self.hidden_factor, self.embedding_size)
 
     def forward(self, input_embedding, length):
         batch_size = input_embedding.size(0)     # size on 0-dimension in input_sequence
-        # ENCODER
-        # size of input_embedding is [20, 9, 32]
+
+        # encode
+        # size of input_embedding is [20, 9, 32] for UM
         packed_input = rnn_utils.pack_padded_sequence(input_embedding, length, batch_first=True)
         _, hidden = self.encoder_rnn(packed_input)
 
@@ -55,15 +57,14 @@ class SentenceVAE(nn.Module):
         else:
             hidden = hidden.squeeze()
 
-        # REPARAMETERIZATION
+        # hidden -> latent space
         mean = self.hidden2mean(hidden)
         logv = self.hidden2logv(hidden)
         std = torch.exp(0.5 * logv)
-
         z = to_var(torch.randn([batch_size, self.latent_size]))
         z = z * std + mean
 
-        # DECODER
+        # latent space -> hidden
         hidden = self.latent2hidden(z)
 
         if self.bidirectional or self.num_layers > 1:
@@ -72,36 +73,17 @@ class SentenceVAE(nn.Module):
         else:
             hidden = hidden.unsqueeze(0)
 
-        # decoder input
-        # Do not need word dropout
-
-        # if self.word_dropout_rate > 0:
-        #     # randomly replace decoder input with <unk>
-        #     prob = torch.rand(input_sequence.size())
-        #     if torch.cuda.is_available():
-        #         prob=prob.cuda()
-        #     prob[(input_sequence.data - self.sos_idx) * (input_sequence.data - self.pad_idx) == 0] = 1
-        #     decoder_input_sequence = input_sequence.clone()
-        #     decoder_input_sequence[prob < self.word_dropout_rate] = self.unk_idx
-        #     input_embedding = self.embedding(decoder_input_sequence)
-
+        # decode
         input_embedding = self.embedding_dropout(input_embedding)
         packed_input = rnn_utils.pack_padded_sequence(input_embedding, length, batch_first=True)
-
-        # decoder forward pass
         outputs, _ = self.decoder_rnn(packed_input, hidden)
 
         # process outputs
         padded_outputs = rnn_utils.pad_packed_sequence(outputs, batch_first=True)[0]
         padded_outputs = padded_outputs.contiguous()
-        output_embedding = self.output2embedding(padded_outputs)
+        output_embedding = self.hidden2embedding(padded_outputs)
 
-        # logp = nn.LogSoftmax(output_embedding, dim=-1)
-
-        # return logp, mean, logv, z
         return output_embedding, mean, logv, z
-
-    # we do not need inference
 
     # def inference(self, n=4, z=None):
     #
