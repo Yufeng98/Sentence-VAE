@@ -1,6 +1,11 @@
 #!/bin/bash
-export EP=1
-python train.py -ep ${EP}
+export EP=20
+export CUT_START=4
+export LINES=288
+export SUBJECT=95
+export SEQ_LEN=9
+export EB=32
+python train.py -ep ${EP} --site 'UM' --cut_start ${CUT_START} --lines ${LINES} --subject ${SUBJECT} --seq_len ${SEQ_LEN} -eb ${EB}
 export CUT_START=1
 export LINES=175
 export SUBJECT=173

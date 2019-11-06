@@ -2,6 +2,7 @@ import os
 import io
 import json
 import numpy as np
+from random import shuffle
 from sklearn.preprocessing import scale
 from torch.utils.data import Dataset
 
@@ -41,7 +42,7 @@ class Data(Dataset):
 
         file_dir = './{}'.format(self.data_dir)
         file = list(os.walk(file_dir))[0][-1]
-        data = []
+        data_dict = {}
         dataset = {}
 
         for filename in file:
@@ -67,7 +68,15 @@ class Data(Dataset):
             node = []
             for i in range(200):
                 node.append(subject[:, :, i])
-            data.append(np.array(node))                                                     # UM [95, 200, 9, 32]
+            data_dict[filename] = np.array(node)                                # UM [95, 200, 9, 32]
+
+        # shuffle to split training and validation sets
+        data_list = list(data_dict.items())
+        shuffle(data_list)
+        data_shuffle = []
+        for i in range(self.subject):
+            data_shuffle.append([i]+list(data_list[i]))                            # UM [No., filename, [200,9,32]] * 95
+        data = [i[-1] for i in data_shuffle]
 
         # reshape data and build dataset
         data = np.array(data).reshape(self.subject*(200//self.batch_size),
@@ -76,6 +85,7 @@ class Data(Dataset):
         valid_data = data[round(self.subject*0.8)*(200//self.batch_size):, :, :, :]         # UM valid [190, 20, 9, 32]
         dataset['train'] = train_data.reshape(-1, self.seq_len, self.embedding_size).tolist()
         dataset['valid'] = valid_data.reshape(-1, self.seq_len, self.embedding_size).tolist()
+        dataset['order'] = [i[:2] for i in data_shuffle]
 
         # write data to '/data.json'
         with io.open(self.dir + '/{}_data.json'.format(self.data_dir), 'wb') as data_file:

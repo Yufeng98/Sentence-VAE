@@ -5,7 +5,7 @@ import torch.nn.utils.rnn as rnn_utils
 from utils import to_var
 
 
-class SentenceVAE(nn.Module):
+class LSTM_VAE(nn.Module):
 
     def __init__(self, embedding_size, rnn_type, hidden_size, word_dropout, embedding_dropout, latent_size,
                  num_layers=1, bidirectional=False):
@@ -36,11 +36,11 @@ class SentenceVAE(nn.Module):
         self.hidden_factor = (2 if bidirectional else 1) * num_layers
         self.encoder_rnn = rnn(self.embedding_size, hidden_size, num_layers=num_layers,
                                bidirectional=self.bidirectional, batch_first=True)
-        self.decoder_rnn = rnn(self.embedding_size, hidden_size, num_layers=num_layers,
-                               bidirectional=self.bidirectional, batch_first=True)
         self.hidden2mean = nn.Linear(hidden_size * self.hidden_factor, latent_size)
         self.hidden2logv = nn.Linear(hidden_size * self.hidden_factor, latent_size)
         self.latent2hidden = nn.Linear(latent_size, hidden_size * self.hidden_factor)
+        self.decoder_rnn = rnn(self.embedding_size, hidden_size, num_layers=num_layers,
+                               bidirectional=self.bidirectional, batch_first=True)
         self.hidden2embedding = nn.Linear(hidden_size * self.hidden_factor, self.embedding_size)
 
     def forward(self, input_embedding, length):
@@ -59,8 +59,8 @@ class SentenceVAE(nn.Module):
 
         # hidden -> latent space
         mean = self.hidden2mean(hidden)
-        logv = self.hidden2logv(hidden)
-        std = torch.exp(0.5 * logv)
+        logvar = self.hidden2logv(hidden)
+        std = torch.exp(0.5 * logvar)
         z = to_var(torch.randn([batch_size, self.latent_size]))
         z = z * std + mean
 
@@ -83,7 +83,7 @@ class SentenceVAE(nn.Module):
         padded_outputs = padded_outputs.contiguous()
         output_embedding = self.hidden2embedding(padded_outputs)
 
-        return output_embedding, mean, logv, z
+        return output_embedding, mean, logvar, z
 
     # def inference(self, n=4, z=None):
     #

@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader
 from collections import OrderedDict, defaultdict
 from data import Data
 from utils import to_var, expierment_name
-from model import SentenceVAE
+from model import LSTM_VAE
 
 
 def main(args):
@@ -25,7 +25,7 @@ def main(args):
                                args.embedding_size, args.cut_start, args.lines)
 
     # load model
-    model = SentenceVAE(
+    model = LSTM_VAE(
         embedding_size=args.embedding_size,
         rnn_type=args.rnn_type,  # gru
         hidden_size=args.hidden_size,  # 256
@@ -63,10 +63,10 @@ def main(args):
     mse_loss = torch.nn.MSELoss()
     cos_loss = torch.nn.CosineSimilarity(dim=-1)
 
-    def loss_fn(output, target, mean, logv):
+    def loss_fn(output, target, mean, logvar):
         mse = mse_loss(output, target)
         cos = torch.mean(1 - cos_loss(output, target))
-        KL_loss = -0.5 * torch.sum(1 + logv - mean.pow(2) - logv.exp())
+        KL_loss = -0.5 * torch.sum(1 + logvar - mean.pow(2) - logvar.exp())
         return cos, mse, KL_loss
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
@@ -104,10 +104,10 @@ def main(args):
                 target = batch.clone()
 
                 # Forward pass
-                output, mean, logv, z = model(batch, length)
+                output, mean, logvar, z = model(batch, length)
 
                 # loss calculation
-                cos, mse, KL_loss = loss_fn(output, target, mean, logv)
+                cos, mse, KL_loss = loss_fn(output, target, mean, logvar)
                 # print(cos.item(), mse.item(), KL_loss.item())
                 loss = (cos + mse + KL_loss) / batch_size
 
@@ -166,7 +166,7 @@ def main(args):
             if (epoch == args.epochs) and (split == "valid"):
                 save = {'target': target.cpu().detach().numpy().tolist(),
                         'output': output.cpu().detach().numpy().tolist()}
-                with io.open('./' + '/save.json', 'wb') as data_file:
+                with io.open('./{}_save.json'.format(args.site), 'wb') as data_file:
                     data = json.dumps(save, ensure_ascii=False)
                     data_file.write(data.encode('utf8', 'replace'))
 
@@ -185,7 +185,6 @@ def main(args):
 
         for iteration, batch in enumerate(data_loader):
 
-            batch_size = args.batch_size
             batch = batch.type(torch.float32)
             length = [args.seq_len for _ in range(20)]
             if torch.is_tensor(batch):
@@ -196,9 +195,9 @@ def main(args):
 
             # save latent space for both training and validation batch
             latent.append(z.cpu().detach().numpy().tolist())
-    latent = np.array(latent).reshape(args.subject, 200, 8)
+    latent = np.array(latent).reshape(args.subject, 200, args.latent_size)
     print(np.shape(latent))
-    with io.open('./' + '/{}_latent.json'.format(args.site), 'wb') as data_file:
+    with io.open('./{}_latent.json'.format(args.site), 'wb') as data_file:
         data = json.dumps(latent.tolist(), ensure_ascii=False)
         data_file.write(data.encode('utf8', 'replace'))
 
