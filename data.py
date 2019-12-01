@@ -22,8 +22,7 @@ class Data(Dataset):
         self.lines = lines
         self.dir = os.getcwd()
         if not os.path.exists(self.dir + '/{}_data.json'.format(self.data_dir)):
-            name = '/{}_data.json'.format(self.data_dir)
-            print("{} preprocessed file not found at {}. Creating new.".format(split.upper(), self.dir + name))
+            print("{} preprocessed file not found. Creating new.".format(self.data_dir))
             self._create_data()
         else:
             self._load_data()
@@ -40,22 +39,21 @@ class Data(Dataset):
 
     def _create_data(self):
 
-        file_dir = './{}'.format(self.data_dir)
-        file = list(os.walk(file_dir))[0][-1]
+        file_dir = '/{}'.format(self.data_dir)
+        file = list(os.walk(self.dir + file_dir))[0][-1]
+        data_norm = []
         data_dict = {}
         dataset = {}
 
         for filename in file:
 
             # read raw data
-            f = open("./{}/{}".format(self.data_dir, filename))
+            f = open(self.dir + "/{}/{}".format(self.data_dir, filename))
             lines_str = f.readlines()[self.cut_start: self.cut_start + self.lines]
             f.close()
-
-            # normalization for each line
             lines = []
             for i in range(self.lines):
-                lines.append(scale(list(map(float, lines_str[i].split()))))
+                lines.append(list(map(float, lines_str[i].split())))            # UM lines [288, 200]
 
             # truncation from self.lines to [self.seq_len, self.embedding_size]
             subject = []
@@ -64,18 +62,34 @@ class Data(Dataset):
                 for i in lines[self.embedding_size * j: self.embedding_size * (j + 1)]:
                     lst.append(np.array(list(i)))
                 subject.append(np.array(lst))
-            subject = np.array(subject)
-            node = []
-            for i in range(200):
-                node.append(subject[:, :, i])
-            data_dict[filename] = np.array(node)                                # UM [95, 200, 9, 32]
+            subject = np.array(subject)                                         # UM subject [9, 32, 200]
+            data_norm.append(subject)                                           # UM data_norm [95, 9, 32, 200]
+
+        # normalization for each line
+        data_norm = np.array(data_norm)
+        data_norm_swap = []
+        for i in range(200):
+            data_norm_swap.append(data_norm[:, :, :, i])                        # UM data_norm_swap [200, 95, 9, 32]
+        # tmp = np.swapaxes(data_norm, 2, 3)
+        # tmp = np.swapaxes(tmp, 1, 2)
+        # tmp = np.swapaxes(tmp, 0, 1)
+
+        # normalize for each node
+        data_norm_swap = np.array(data_norm_swap).reshape((19000, -1))
+        data_mean = np.mean(data_norm_swap, axis=1)
+        data_std = np.std(data_norm_swap, axis=1)
+        data_normalization = np.array([(data_norm_swap[i] - data_mean[i]) / data_std[1] for i in range(19000)])
+        data_normalization = data_normalization.reshape((200, 95, 9, 32))
+
+        for i in range(len(file)):
+            data_dict[file[i]] = np.array(data_normalization[:, i, :, :])       # UM data_dict [95, 200, 9, 32]
 
         # shuffle to split training and validation sets
         data_list = list(data_dict.items())
         shuffle(data_list)
         data_shuffle = []
         for i in range(self.subject):
-            data_shuffle.append([i]+list(data_list[i]))                            # UM [No., filename, [200,9,32]] * 95
+            data_shuffle.append([i]+list(data_list[i]))                        # UM [No., filename, [200,9,32]] * 95
         data = [i[-1] for i in data_shuffle]
 
         # reshape data and build dataset
@@ -85,7 +99,7 @@ class Data(Dataset):
         valid_data = data[round(self.subject*0.8)*(200//self.batch_size):, :, :, :]         # UM valid [190, 20, 9, 32]
         dataset['train'] = train_data.reshape(-1, self.seq_len, self.embedding_size).tolist()
         dataset['valid'] = valid_data.reshape(-1, self.seq_len, self.embedding_size).tolist()
-        dataset['order'] = [i[:2] for i in data_shuffle]
+        dataset['Order'] = [i[:2] for i in data_shuffle]
 
         # write data to '/data.json'
         with io.open(self.dir + '/{}_data.json'.format(self.data_dir), 'wb') as data_file:

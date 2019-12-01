@@ -15,7 +15,7 @@ from model import LSTM_VAE
 
 
 def main(args):
-    ts = time.strftime('%Y-%b-%d-%H:%M:%S', time.gmtime())
+    ts = time.strftime('%Y-%b-%d-%H-%M-%S', time.gmtime())
 
     # Load dataset
     splits = ['train', 'valid']
@@ -69,12 +69,13 @@ def main(args):
         KL_loss = -0.5 * torch.sum(1 + logvar - mean.pow(2) - logvar.exp())
         return cos, mse, KL_loss
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
-
     tensor = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.Tensor
     step = 0
-
+    learning_rate = args.learning_rate
     for epoch in range(1, args.epochs + 1):
+        if epoch > args.decay_epoch:
+            learning_rate = learning_rate * args.learning_rate_decay
+        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
         for split in splits:
 
@@ -215,9 +216,11 @@ if __name__ == '__main__':
 
     # do not need to change
     parser.add_argument('--data_dir', type=str, default='data')
-    parser.add_argument('-ep', '--epochs', type=int, default=5)
+    parser.add_argument('-ep', '--epochs', type=int, default=30)
     parser.add_argument('-bs', '--batch_size', type=int, default=20)
-    parser.add_argument('-lr', '--learning_rate', type=float, default=1e-5)
+    parser.add_argument('-lr', '--learning_rate', type=float, default=1e-4)
+    parser.add_argument('-de', '--decay_epoch', type=int, default=20)
+    parser.add_argument('-dc', '--learning_rate_decay', type=float, default=0.9)
     parser.add_argument('-rnn', '--rnn_type', type=str, default='gru')
     parser.add_argument('-hs', '--hidden_size', type=int, default=256)
     parser.add_argument('-nl', '--num_layers', type=int, default=1)
