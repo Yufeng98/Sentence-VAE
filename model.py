@@ -33,15 +33,15 @@ class LSTM_VAE(nn.Module):
         else:
             raise ValueError()
 
-        self.hidden_factor = (2 if bidirectional else 1) * num_layers
+        self.hidden_factor = 2 if bidirectional else 1
         self.encoder_rnn = rnn(self.embedding_size, hidden_size, num_layers=num_layers,
                                bidirectional=self.bidirectional, batch_first=True)
         self.hidden2mean = nn.Linear(hidden_size * self.hidden_factor, latent_size)
         self.hidden2logv = nn.Linear(hidden_size * self.hidden_factor, latent_size)
-        self.latent2hidden = nn.Linear(latent_size, hidden_size * self.hidden_factor)
-        self.decoder_rnn = rnn(self.embedding_size, hidden_size, num_layers=num_layers,
+        self.latent2hidden= nn.Linear(latent_size, hidden_size * self.hidden_factor)
+        self.decoder_rnn = rnn(hidden_size * self.hidden_factor, hidden_size, num_layers=num_layers,
                                bidirectional=self.bidirectional, batch_first=True)
-        self.hidden2embedding = nn.Linear(hidden_size * self.hidden_factor // num_layers, self.embedding_size)
+        self.hidden2embedding = nn.Linear(hidden_size * self.hidden_factor, self.embedding_size)
 
     def forward(self, input_embedding, length):
         batch_size = input_embedding.size(0)     # size on 0-dimension in input_sequence
@@ -49,31 +49,33 @@ class LSTM_VAE(nn.Module):
         # encode
         # size of input_embedding is [20, 9, 32] for UM
         packed_input = rnn_utils.pack_padded_sequence(input_embedding, length, batch_first=True)
-        _, hidden = self.encoder_rnn(packed_input)
-        if self.bidirectional or self.num_layers > 1:
-            # flatten hidden state
-            hidden = hidden.view(batch_size, self.hidden_size*self.hidden_factor)
-        else:
-            hidden = hidden.squeeze()
+        output_embedding, hidden = self.encoder_rnn(packed_input)
+        padded_output_embedding = rnn_utils.pad_packed_sequence(output_embedding, batch_first=True)[0]
+        padded_output_embedding = padded_output_embedding.contiguous()
+        # if self.bidirectional or self.num_layers > 1:
+        #     # flatten hidden state
+        #     hidden = hidden.view(batch_size, self.hidden_size*self.hidden_factor)
+        # else:
+        #     hidden = hidden.squeeze()
 
         # hidden -> latent space
-        mean = self.hidden2mean(hidden)
-        logvar = self.hidden2logv(hidden)
+        mean = self.hidden2mean(padded_output_embedding)
+        logvar = self.hidden2logv(padded_output_embedding)
         std = torch.exp(0.5 * logvar)
-        z = to_var(torch.randn([batch_size, self.latent_size]))
+        z = to_var(torch.randn([batch_size, length[0], self.latent_size]))
         z = z * std + mean
 
         # latent space -> hidden
-        hidden = self.latent2hidden(z)
+        output_embedding = self.latent2hidden(z)
 
-        if self.bidirectional or self.num_layers > 1:
-            # unflatten hidden state
-            hidden = hidden.view(self.hidden_factor, batch_size, self.hidden_size)
-        else:
-            hidden = hidden.unsqueeze(0)
+        # if self.bidirectional or self.num_layers > 1:
+        #     # unflatten hidden state
+        #     hidden = hidden.view(self.hidden_factor, batch_size, self.hidden_size)
+        # else:
+        #     hidden = hidden.unsqueeze(0)
 
         # decode
-        input_embedding = self.embedding_dropout(input_embedding)
+        input_embedding = self.embedding_dropout(output_embedding)
         packed_input = rnn_utils.pack_padded_sequence(input_embedding, length, batch_first=True)
         outputs, _ = self.decoder_rnn(packed_input, hidden)
 

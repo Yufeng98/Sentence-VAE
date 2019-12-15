@@ -187,7 +187,7 @@ def main(args):
         for iteration, batch in enumerate(data_loader):
 
             batch = batch.type(torch.float32)
-            length = [args.seq_len for _ in range(20)]
+            length = [args.seq_len for _ in range(args.batch_size)]
             if torch.is_tensor(batch):
                 batch = to_var(batch)
 
@@ -196,7 +196,7 @@ def main(args):
 
             # save latent space for both training and validation batch
             latent.append(z.cpu().detach().numpy().tolist())
-    latent = np.array(latent).reshape(args.subject, 200, args.latent_size)
+    latent = np.array(latent).reshape(args.subject, 200, args.seq_len, args.latent_size)
     print(np.shape(latent))
     with io.open('./{}_latent.json'.format(args.site), 'wb') as data_file:
         data = json.dumps(latent.tolist(), ensure_ascii=False)
@@ -216,15 +216,15 @@ if __name__ == '__main__':
 
     # do not need to change
     parser.add_argument('--data_dir', type=str, default='data')
-    parser.add_argument('-ep', '--epochs', type=int, default=30)
+    parser.add_argument('-ep', '--epochs', type=int, default=40)
     parser.add_argument('-bs', '--batch_size', type=int, default=20)
-    parser.add_argument('-lr', '--learning_rate', type=float, default=1e-4)
-    parser.add_argument('-de', '--decay_epoch', type=int, default=20)
+    parser.add_argument('-lr', '--learning_rate', type=float, default=1e-5)
+    parser.add_argument('-de', '--decay_epoch', type=int, default=35)
     parser.add_argument('-dc', '--learning_rate_decay', type=float, default=0.9)
-    parser.add_argument('-rnn', '--rnn_type', type=str, default='gru')
+    parser.add_argument('-rnn', '--rnn_type', type=str, default='lstm')
     parser.add_argument('-hs', '--hidden_size', type=int, default=256)
     parser.add_argument('-nl', '--num_layers', type=int, default=1)
-    parser.add_argument('-bi', '--bidirectional', action='store_true')
+    parser.add_argument('-bi', '--bidirectional', action='store_false')
     parser.add_argument('-ls', '--latent_size', type=int, default=8)
     parser.add_argument('-wd', '--word_dropout', type=float, default=0)
     parser.add_argument('-ed', '--embedding_dropout', type=float, default=0.5)

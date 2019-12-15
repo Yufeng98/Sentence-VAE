@@ -74,15 +74,22 @@ class Data(Dataset):
         # tmp = np.swapaxes(tmp, 1, 2)
         # tmp = np.swapaxes(tmp, 0, 1)
 
+        # normalize for each subject
+        # data_norm_swap = np.swapaxes(data_norm_swap, 0, 1)                      # UM data_norm_swap [95, 200, 9, 32]
+
         # normalize for each node
-        data_norm_swap = np.array(data_norm_swap).reshape((19000, -1))
+        data_norm_swap = np.array(data_norm_swap).reshape((200, -1))
+        # data_norm_swap = np.array(data_norm_swap).reshape(-1)
         data_mean = np.mean(data_norm_swap, axis=1)
         data_std = np.std(data_norm_swap, axis=1)
-        data_normalization = np.array([(data_norm_swap[i] - data_mean[i]) / data_std[1] for i in range(19000)])
-        data_normalization = data_normalization.reshape((200, 95, 9, 32))
+        data_normalization = np.array([(data_norm_swap[i] - data_mean[i]) / data_std[1] for i in range(200)])
+        # data_normalization = np.array([data_norm_swap - data_mean]) / data_std
+        # data_normalization = data_normalization.reshape((95, 200, 9, 32))
+        data_normalization = data_normalization.reshape((200, self.subject, self.seq_len, self.embedding_size))
 
         for i in range(len(file)):
             data_dict[file[i]] = np.array(data_normalization[:, i, :, :])       # UM data_dict [95, 200, 9, 32]
+            # data_dict[file[i]] = np.array(data_normalization[i, :, :, :])       # UM data_dict [95, 200, 9, 32]
 
         # shuffle to split training and validation sets
         data_list = list(data_dict.items())
