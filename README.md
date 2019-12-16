@@ -11,6 +11,8 @@ Run `sh get_latent_for_sites`. `${SITE}_data.json` is shuffled and split dataset
 |Lines          |288    |175    |232    |112    |
 |Seq_len        |9      |7      |8      |7      |
 |Embedding_size |32     |25     |29     |16     |
+|ASD            |1-43   |1-75   |46-70  |1-40   |
+|Health Control |44-95  |76-173 |1-45   |41-71  |
 
 For example, in site `UM`, shape of dataset loaded from raw file is `[95, 200, 9, 32]`, where `95` is the total number of subjects, `200` is number of regions of interests (ROIs) or nodes in graph, `9` is length of sequence in LSTM and `32` is embedding size in LSTM and also length of truncated sequence used in correlation matrix. 76 out of 95 subjects (80%) are used as training dataset, while other 19 subjects (20%) are used as validation dataset. Dataset has been shuffled before splitting. There are `760` batches in training set and `190` batches in validation set in `UM`. Regulations of data preprocessing in `NYU`, `USM`, `UCLA` are similar.
 
