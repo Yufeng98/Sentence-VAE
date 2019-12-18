@@ -9,10 +9,11 @@ from torch.utils.data import Dataset
 
 class Data(Dataset):
 
-    def __init__(self, split, batch_size, data_dir, subject, seq_len, embedding_size, cut_start, lines):
+    def __init__(self, split, num_region, batch_size, data_dir, subject, seq_len, embedding_size, cut_start, lines):
 
         super().__init__()
         self.split = split
+        self.num_region = num_region
         self.batch_size = batch_size
         self.data_dir = data_dir
         self.subject = subject
@@ -52,6 +53,8 @@ class Data(Dataset):
             lines_str = f.readlines()[self.cut_start: self.cut_start + self.lines]
             f.close()
             lines = []
+            if len(lines_str) < 232:
+                print(filename)
             for i in range(self.lines):
                 lines.append(list(map(float, lines_str[i].split())))            # UM lines [288, 200]
 
@@ -68,7 +71,7 @@ class Data(Dataset):
         # normalization for each line
         data_norm = np.array(data_norm)
         data_norm_swap = []
-        for i in range(200):
+        for i in range(self.num_region):
             data_norm_swap.append(data_norm[:, :, :, i])                        # UM data_norm_swap [200, 95, 9, 32]
         # tmp = np.swapaxes(data_norm, 2, 3)
         # tmp = np.swapaxes(tmp, 1, 2)
@@ -78,14 +81,14 @@ class Data(Dataset):
         # data_norm_swap = np.swapaxes(data_norm_swap, 0, 1)                      # UM data_norm_swap [95, 200, 9, 32]
 
         # normalize for each node
-        data_norm_swap = np.array(data_norm_swap).reshape((200, -1))
+        data_norm_swap = np.array(data_norm_swap).reshape(self.num_region * self.subject, -1)
         # data_norm_swap = np.array(data_norm_swap).reshape(-1)
         data_mean = np.mean(data_norm_swap, axis=1)
         data_std = np.std(data_norm_swap, axis=1)
-        data_normalization = np.array([(data_norm_swap[i] - data_mean[i]) / data_std[1] for i in range(200)])
+        data_normalization = np.array([(data_norm_swap[i] - data_mean[i]) / data_std[1] for i in range(self.num_region * self.subject)])
         # data_normalization = np.array([data_norm_swap - data_mean]) / data_std
         # data_normalization = data_normalization.reshape((95, 200, 9, 32))
-        data_normalization = data_normalization.reshape((200, self.subject, self.seq_len, self.embedding_size))
+        data_normalization = data_normalization.reshape((self.num_region, self.subject, self.seq_len, self.embedding_size))
 
         for i in range(len(file)):
             data_dict[file[i]] = np.array(data_normalization[:, i, :, :])       # UM data_dict [95, 200, 9, 32]
@@ -100,10 +103,10 @@ class Data(Dataset):
         data = [i[-1] for i in data_shuffle]
 
         # reshape data and build dataset
-        data = np.array(data).reshape(self.subject*(200//self.batch_size),
+        data = np.array(data).reshape(self.subject*(self.num_region//self.batch_size),
                                       self.batch_size, self.seq_len, self.embedding_size)   # UM [950, 20, 9, 32]
-        train_data = data[:round(self.subject*0.8)*(200//self.batch_size), :, :, :]         # UM train [760, 20, 9, 32]
-        valid_data = data[round(self.subject*0.8)*(200//self.batch_size):, :, :, :]         # UM valid [190, 20, 9, 32]
+        train_data = data[:round(self.subject*0.8)*(self.num_region//self.batch_size), :, :, :]         # UM train [760, 20, 9, 32]
+        valid_data = data[round(self.subject*0.8)*(self.num_region//self.batch_size):, :, :, :]         # UM valid [190, 20, 9, 32]
         dataset['train'] = train_data.reshape(-1, self.seq_len, self.embedding_size).tolist()
         dataset['valid'] = valid_data.reshape(-1, self.seq_len, self.embedding_size).tolist()
         dataset['Order'] = [i[:2] for i in data_shuffle]

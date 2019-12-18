@@ -6,7 +6,7 @@ import torch
 import argparse
 import numpy as np
 from multiprocessing import cpu_count
-from tensorboardX import SummaryWriter
+# from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 from collections import OrderedDict, defaultdict
 from data import Data
@@ -21,7 +21,7 @@ def main(args):
     splits = ['train', 'valid']
     datasets = OrderedDict()
     for split in splits:
-        datasets[split] = Data(split, args.batch_size, args.site, args.subject, args.seq_len,
+        datasets[split] = Data(split, args.num_region, args.batch_size, args.site, args.subject, args.seq_len,
                                args.embedding_size, args.cut_start, args.lines)
 
     # load model
@@ -99,7 +99,7 @@ def main(args):
 
                 batch_size = args.batch_size
                 batch = batch.type(torch.float32)
-                length = [args.seq_len for _ in range(20)]
+                length = [args.seq_len for _ in range(args.batch_size)]
                 if torch.is_tensor(batch):
                     batch = to_var(batch)
                 target = batch.clone()
@@ -196,7 +196,7 @@ def main(args):
 
             # save latent space for both training and validation batch
             latent.append(z.cpu().detach().numpy().tolist())
-    latent = np.array(latent).reshape(args.subject, 200, args.seq_len, args.latent_size)
+    latent = np.array(latent).reshape(args.subject, args.num_region, args.seq_len, args.latent_size)
     print(np.shape(latent))
     with io.open('./{}_latent.json'.format(args.site), 'wb') as data_file:
         data = json.dumps(latent.tolist(), ensure_ascii=False)
@@ -207,10 +207,11 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
     # specify for dataset site
+    parser.add_argument('-nr', '--num_region', type=int, default=111)
     parser.add_argument('--site', type=str, default='UM')
     parser.add_argument('--cut_start', type=int, default=4)
     parser.add_argument('--lines', type=int, default=288)
-    parser.add_argument('--subject', type=int, default=95)
+    parser.add_argument('--subject', type=int, default=88)
     parser.add_argument('--seq_len', type=int, default=9)
     parser.add_argument('-eb', '--embedding_size', type=int, default=32)
 
@@ -218,7 +219,7 @@ if __name__ == '__main__':
     parser.add_argument('--data_dir', type=str, default='data')
     parser.add_argument('-ep', '--epochs', type=int, default=40)
     parser.add_argument('-bs', '--batch_size', type=int, default=20)
-    parser.add_argument('-lr', '--learning_rate', type=float, default=1e-5)
+    parser.add_argument('-lr', '--learning_rate', type=float, default=1e-4)
     parser.add_argument('-de', '--decay_epoch', type=int, default=35)
     parser.add_argument('-dc', '--learning_rate_decay', type=float, default=0.9)
     parser.add_argument('-rnn', '--rnn_type', type=str, default='lstm')

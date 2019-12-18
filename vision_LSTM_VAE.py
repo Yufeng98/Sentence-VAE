@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 fold = os.getcwd()
-site = 'UM'
+site = 'NYU'
 
 with open(fold + '/{}_save.json'.format(site), 'r') as file:
     # latent = np.array(json.load(file))
