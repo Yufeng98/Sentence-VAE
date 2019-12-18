@@ -1,0 +1,187 @@
+import numpy as np
+from sklearn import svm
+from sklearn.ensemble import RandomForestClassifier
+import deepdish as dd
+import matplotlib.pyplot as plt
+import json
+import csv
+import os
+import io
+
+np.random.seed(0)
+methods = ["rf"]
+data_choice = "latent"
+# data_choice = "embedding"
+parameter = [['rbf', 1]]
+fold = os.getcwd()
+# for c in [i/100 for i in [1,3,6,10,30,60,100,300,600,1000,3000,6000,10000]]:
+for c in [1]:
+    for site, num, seq_len, subject, embed, C in [
+                                                    ["USM", 11, 8, 52, 29, c],
+                                                    ["UM", 12, 9, 88, 32, c],
+                                                    ["NYU", 11, 7, 167, 25, c],
+                                                    ["UCLA", 14, 7, 63, 16, c]
+                                                ]:
+        file_dir = fold + '/' + site
+        file = list(os.walk(file_dir))[0][-1][:]
+        file_corr = list(os.walk(file_dir + '_correlation_matrix'))[0][-1][:]
+        rows = {}  # label: rows = ['UM_1_0050272':1 ...]
+
+        if not os.path.exists(fold + '/{}_node_corr.h5'.format(site)):
+            # correlation matrix
+            corr = []
+            for filename in file_corr:
+                tmp = dd.io.load(fold + "//{}_correlation_matrix//{}".format(site, filename))
+                # data.append(np.sum(tmp, axis=0))
+                tri = np.triu(tmp, 1).reshape(-1)
+                tri = tri[tri != 0]
+                tri[tri < 0] = 0
+                corr.append(tri)
+            corr = np.array(corr)
+
+            # latent vector
+            with open(fold + '/Sentence-VAE/{}_data.json'.format(site), 'r') as file_data:
+                order = json.load(file_data)['Order']  # "Order": [[0, "USM_0050486_rois_cc200.1D"] ...]
+            with open(fold + '/Sentence-VAE/{}_latent.json'.format(site), 'r') as file_latent:
+                latent_array = np.array(json.load(file_latent))  # UM [95, 200, 9, 8]
+            latent_array = np.swapaxes(latent_array, 1, 2)  # UM [95, 9, 200, 8]
+            latent = {}
+            for i in order:
+                for j in range(seq_len):
+                    latent[i[1][:num] + '_{}'.format(j)] = latent_array[i[0]][j].reshape(-1)
+
+            with open(fold + '/Phenotypic_V1_0b_preprocessed1.csv', newline='') as csvfile:
+                reader = csv.reader(csvfile, delimiter=' ', quotechar='|')
+                for i in reader:
+                    if list(i[0].split(','))[5] in ['UM_1', 'NYU', 'USM', 'UCLA_1']:
+                        name, lab = list(i[0].split(','))[6:8]
+                        lab = int(lab) % 2
+                        rows[name] = lab
+
+            # embedding vector
+            embedding = {}
+            for filename in file:
+                f = open(fold + "//{}//{}".format(site, filename))
+                if site == "UM":
+                    lines = f.readlines()[4:-4]   # UM (296 - 8) / 32 = 9
+                elif site == "NYU":
+                    lines = f.readlines()[1:]     # NYU (176 - 1) / 25 = 7
+                elif site == "USM":
+                    lines = f.readlines()[2:-1]  # USM (235 - 3) / 29 = 8
+                else:
+                    lines = f.readlines()[2:-1]   # UCLA (113 - 1) / 16 = 7
+                f.close()
+                for j in range(seq_len):
+                    lst = []
+                    for i in lines[embed * j: embed * (j + 1)]:
+                        lst.append(np.array(list(map(float, i.split()))))
+                    embedding[filename[:num] + '_{}'.format(j)] = np.array(lst).reshape(-1)
+
+            label = []
+            latent_data = []
+            embedding_data = []
+            for filename in file:
+                for j in range(seq_len):
+                    latent_data.append(latent[filename[:num] + '_{}'.format(j)])
+                    embedding_data.append(embedding[filename[:num] + '_{}'.format(j)])
+                    label.append((rows[filename[:num]]))
+
+            latent_data = np.array(latent_data)
+            embedding_data = np.array(embedding_data)
+            latent_data = np.concatenate((latent_data, corr), axis=1)
+            embedding_data = np.concatenate((embedding_data, corr), axis=1)
+            label = np.array(label)
+            dataset = {'latent_data': latent_data, 'embedding_data': embedding_data, 'label': label}
+            dd.io.save(fold + '/{}.h5'.format(site), dataset)
+        else:
+            dataset = dd.io.load(fold + '/{}_node_corr.h5'.format(site))
+            latent_data = np.array(dataset['latent_data'])
+            embedding_data = np.array(dataset['embedding_data'])
+            label = np.array(dataset['label'])
+
+        if data_choice == 'latent':
+            data = latent_data
+        else:
+            data = embedding_data
+        index = [i for i in range(subject)]
+        np.random.shuffle(index)
+
+        split_sub = []
+        split_len = subject // 5
+        for i in range(4):
+            split_sub.append(index[i * split_len: (i + 1) * split_len])
+        split_sub.append(index[4 * split_len:])
+
+        split = []
+        for i in range(4):
+            tmp = []
+            for j in split_sub[i]:
+                for k in range(seq_len):
+                    tmp.append(j * seq_len + k)
+            split.append(tmp)
+        tmp = []
+        for j in split_sub[4]:
+            for k in range(seq_len):
+                tmp.append(j * seq_len + k)
+        split.append(tmp)
+
+        acc_split = []
+        accuracy = {"rf": 0, "svm": 0}
+        accuracy_split = {"rf": [], "svm": []}
+        for k in range(5):
+            sum_acc = 0
+            split_train = [0, 1, 2, 3, 4]
+            split_train.remove(k)
+            train_index = []
+            for j in split_train:
+                train_index += split[j]
+            test_index = split[k]
+            train_data = data[train_index]
+            mean = train_data.mean(0)
+            dev = train_data.std(0)
+            train_data = (train_data - mean) / dev
+            train_label = label[train_index]
+            test_data = data[test_index]
+            test_label = label[test_index]
+            test_data = (test_data - mean) / dev
+            for j in methods:
+                if j == "rf":
+                    clf = RandomForestClassifier(n_estimators=1000, max_depth=3)
+                else:
+                    clf = svm.SVC(kernel='rbf', C=C, gamma='auto', probability=False)
+                clf.fit(train_data, train_label)
+                # label_pred = clf.predict(train_data)
+                # pred = train_label == label_pred
+                label_pred = clf.predict(test_data)
+                pred = test_label == label_pred
+                # print(sum(clf.predict(train_data)))
+                print(sum(clf.predict(test_data)))
+                predict = {}
+                for i in range(len(test_index)):
+                    subject_id = test_index[i]//seq_len
+                    if subject_id not in predict.keys():
+                        predict[subject_id] = [pred[i]]
+                    else:
+                        predict[subject_id].append(pred[i])
+                threshold = (seq_len - 1) // 2
+                true = 0
+                for key in predict.keys():
+                    if sum(predict[key]) >= (seq_len - threshold):
+                        true += 1
+                accuracy[j] = true / len(test_index) * seq_len
+            accuracy_split["rf"].append(accuracy["rf"])
+            accuracy_split["svm"].append(accuracy["svm"])
+            # print("{} {}:{}".format(site, k, average_acc))
+        print("{} SVM acc: {}".format(site, sum(accuracy_split["svm"]) / 5))
+        print("{} Random Foreast acc: {}".format(site, sum(accuracy_split["rf"]) / 5))
+
+test = False
+if test:
+    y = [np.random.randint(2) for i in range(40)]
+    X = np.random.rand(40, 3)
+    # fit the model, don't regularize for illustration purposes
+    clf = svm.SVC(kernel='linear', C=1000)
+    clf.fit(X, y)
+    y_pred = clf.predict(X)
+    pred = y == y_pred
+    print(sum(pred))
